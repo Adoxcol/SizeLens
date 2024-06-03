@@ -1,0 +1,129 @@
+#include "WifiCam.hpp"
+#include <WiFi.h>
+#include <TFT_eSPI.h>
+#include <HTTPClient.h>
+
+
+static const char* WIFI_SSID = "Aqua";
+static const char* WIFI_PASS = "leomessi19";
+static const char* READ_API_KEY = "OYD7QCUOKD07Q6AL"; // Replace with your Read API Key
+static const char* CHANNEL_ID = "2236388";     // Replace with your Channel ID
+
+
+TFT_eSPI tft = TFT_eSPI();
+esp32cam::Resolution initialResolution;
+
+
+WebServer server(80);
+
+
+float detected_width = 0.0;
+float detected_height = 0.0;
+
+
+void updateTFTDisplay(float width, float height) {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_WHITE);
+    tft.setTextSize(2);
+
+
+    tft.setCursor(10, 30);
+    tft.print("Detected Width: ");
+    tft.println(width);
+
+
+    tft.setCursor(10, 60);
+    tft.print("Detected Height: ");
+    tft.println(height);
+}
+
+
+void setup() {
+    Serial.begin(115200);
+    Serial.println();
+    delay(2000);
+
+
+    WiFi.persistent(false);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    if (WiFi.waitForConnectResult() != WL_CONNECTED) {
+        Serial.println("WiFi failure");
+        delay(5000);
+        ESP.restart();
+    }
+    Serial.println("WiFi connected");
+
+
+    {
+        using namespace esp32cam;
+
+
+        initialResolution = Resolution::find(1024, 768);
+
+
+        Config cfg;
+        cfg.setPins(pins::AiThinker);
+        cfg.setResolution(initialResolution);
+        cfg.setJpeg(80);
+
+
+        bool ok = Camera.begin(cfg);
+        if (!ok) {
+            Serial.println("camera initialize failure");
+            delay(5000);
+            ESP.restart();
+        }
+        Serial.println("camera initialize success");
+    }
+
+
+    Serial.println("camera starting");
+    Serial.print("http://");
+    Serial.println(WiFi.localIP());
+
+
+    tft.init(); // Initialize TFT display
+    tft.fillScreen(TFT_BLACK); // Clear the display
+
+
+    addRequestHandlers();
+    server.begin();
+}
+
+
+void loop() {
+    server.handleClient();
+
+
+    HTTPClient http;
+
+
+    String url = "https://api.thingspeak.com/channels/" + String(CHANNEL_ID) + "/fields/1/last.txt?api_key=" + READ_API_KEY;
+    http.begin(url);
+    int httpCode = http.GET();
+    if (httpCode == HTTP_CODE_OK) {
+        detected_width = http.getString().toFloat();
+    }
+    http.end();
+
+
+    url = "https://api.thingspeak.com/channels/" + String(CHANNEL_ID) + "/fields/2/last.txt?api_key=" + READ_API_KEY;
+    http.begin(url);
+    httpCode = http.GET();
+    if (httpCode == HTTP_CODE_OK) {
+        detected_height = http.getString().toFloat();
+    }
+    http.end();
+
+
+    updateTFTDisplay(detected_width, detected_height);
+
+
+    delay(5000);
+}
+
+
+
+
+
