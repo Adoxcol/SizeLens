@@ -1,0 +1,173 @@
+import cv2
+import numpy as np
+import requests
+import time
+import concurrent.futures
+import cProfile
+
+
+def main():
+    # Your existing code here
+    pass
+
+
+
+
+   
+url = 'http://192.168.1.94/400x296.jpg'
+cv2.namedWindow("Live Transmission", cv2.WINDOW_AUTOSIZE)
+THROTTLE_INTERVAL = 5  # 5 seconds
+last_send_time = time.time()
+# Define ThingSpeak API endpoint and your ThingSpeak API key
+THINGSPEAK_API_URL = 'https://api.thingspeak.com/update.json'
+THINGSPEAK_API_KEY = 'TYKBX4Y36J51A1TH'
+CLOTHING_WIDTH_FIELD = 1
+CLOTHING_HEIGHT_FIELD = 2
+# Load YOLO model and configuration
+net = cv2.dnn.readNet("yolov3.weights", "yolov3.cfg")
+layer_names = net.getLayerNames()
+output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers()]
+classes = []
+with open("coco.names", "r") as f:
+    classes = f.read().strip().split("\n")
+
+
+frame_skip = 5  # Process every 5th frame
+frame_counter = 0
+capture_image = False
+while True:
+    response = requests.get(url)
+    imgnp = np.array(bytearray(response.content), dtype=np.uint8)
+    img = cv2.imdecode(imgnp, -1)
+
+
+    frame_counter += 1
+    if frame_counter % frame_skip != 0:
+        continue
+ # Calculate the time elapsed since the last send
+    elapsed_time = time.time() - last_send_time
+# Check if the throttle interval has passed
+    if elapsed_time >= THROTTLE_INTERVAL:
+        # Send clothing size to ThingSpeak
+       
+
+
+        # Update the last send time
+        last_send_time = time.time()
+
+
+    # Process image with YOLO
+    blob = cv2.dnn.blobFromImage(img, scalefactor=0.00392, size=(416, 416), swapRB=True, crop=False)
+    net.setInput(blob)
+    outs = net.forward(output_layers)
+
+
+    class_ids = []
+    confidences = []
+    boxes = []
+
+
+    height, width, channels = img.shape
+
+
+    for out in outs:
+        for detection in out:
+            scores = detection[5:]
+            class_id = np.argmax(scores)
+            confidence = scores[class_id]
+            if confidence > 0.5:  # Set a confidence threshold
+                center_x = int(detection[0] * width)
+                center_y = int(detection[1] * height)
+                w = int(detection[2] * width)
+                h = int(detection[3] * height)
+
+
+                # Rectangle coordinates
+                x = int(center_x - w / 2)
+                y = int(center_y - h / 2)
+
+
+                boxes.append([x, y, w, h])
+                confidences.append(float(confidence))
+                class_ids.append(class_id)
+
+
+    indexes = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.4)
+
+
+    for i in range(len(boxes)):
+        if i in indexes:
+            x, y, w, h = boxes[i]
+            label = str(classes[class_ids[i]])
+            color = (0, 255, 0)  # Green color
+            cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
+            cv2.putText(img, label, (x, y + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+
+
+
+            # Estimate clothing size based on detected object's width and height
+            w = max(w, 0.1)
+            h = max(h, 0.1)
+            estimated_width_cm = w / 10  # Replace with actual estimation method
+            estimated_height_cm = h / 10  # Replace with actual estimation method
+           
+            # Print the detected width and height
+            print(f"Detected object width: {w}, Estimated width: {estimated_width_cm}")
+            print(f"Detected object height: {h}, Estimated height: {estimated_height_cm}")
+
+
+            if np.isnan(estimated_width_cm) or not np.isfinite(estimated_width_cm):
+                print("Invalid estimated width. Skipping data submission.")
+                continue  # Skip this iteration and continue with the next frame
+
+
+            if np.isnan(estimated_height_cm) or not np.isfinite(estimated_height_cm):
+                print("Invalid estimated height. Skipping data submission.")
+                continue  # Skip this iteration and continue with the next frame
+           
+
+
+            # Display clothing size at the top
+            cv2.putText(img, f"Size: {estimated_width_cm:.2f} cm", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+
+
+            # Send clothing size to ThingSpeak
+            payload = {
+                'api_key': THINGSPEAK_API_KEY,
+                f'field{CLOTHING_WIDTH_FIELD}': estimated_width_cm,
+                f'field{CLOTHING_HEIGHT_FIELD}': estimated_height_cm
+            }
+            response = requests.post(THINGSPEAK_API_URL, data=payload)
+
+
+    # Resize the displayed image for better performance
+    img_display = cv2.resize(img, (800, 600))
+
+
+    if capture_image:
+        timestamp = int(time.time())
+        image_filename = f"captured_{timestamp}.jpg"
+        cv2.imwrite(image_filename, img)
+        print(f"Image captured and saved as {image_filename}")
+        capture_image = False
+
+
+    # Display the image
+    cv2.imshow("Live Transmission", img_display)
+
+
+    key = cv2.waitKey(1)
+    if key == ord('q'):
+        break
+    elif key == ord('c'):
+        capture_image = True
+
+
+cv2.destroyAllWindows()
+
+
+pass
+if __name__ == "__main__":
+    cProfile.run("main()")
+
